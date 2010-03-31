@@ -90,7 +90,10 @@ struct rumati_avl_node_update {
  *      RUMATI_AVL_ENOMEM   If there was a memory allocation error.
  */
 RUMATI_AVL_API
-RUMATI_AVL_ERROR rumati_avl_new(RUMATI_AVL_TREE **tree, RUMATI_AVL_COMPARATOR comparator, void *udata)
+RUMATI_AVL_ERROR rumati_avl_new(
+        RUMATI_AVL_TREE **tree,
+        RUMATI_AVL_COMPARATOR comparator,
+        void *udata)
 {
     RUMATI_AVL_TREE *retv;
 
@@ -119,8 +122,16 @@ RUMATI_AVL_ERROR rumati_avl_new(RUMATI_AVL_TREE **tree, RUMATI_AVL_COMPARATOR co
 /*
  * rumati_avl_destroy_node() - destroys a single node by invoking a destructor
  * on the node's data, and free()ing the node.
+ *
+ * Parameters:
+ *      n -     the node to destroy
+ *      destructor -    the destrctor to use to destroy the nodes data
+ *      udata - the user supplied pointer associated with the tree
  */
-static void rumati_avl_destroy_node(struct rumati_avl_node *n, RUMATI_AVL_NODE_DESTRUCTOR destructor, void *udata)
+static void rumati_avl_destroy_node(
+        struct rumati_avl_node *n,
+        RUMATI_AVL_NODE_DESTRUCTOR destructor,
+        void *udata)
 {
     destructor(udata, n->data);
     free(n);
@@ -129,8 +140,16 @@ static void rumati_avl_destroy_node(struct rumati_avl_node *n, RUMATI_AVL_NODE_D
 /*
  * rumati_avl_destroy_node_recursive() - recursively destroys a node, and all
  * its children using rumati_avl_node_destroy().
+ *
+ * Parameters:
+ *      n -     the node to destroy, along with all its children
+ *      destructor -    the destrctor to use to destroy the nodes data
+ *      udata - the user supplied pointer associated with the tree
  */
-static void rumati_avl_destroy_node_recursive (struct rumati_avl_node *n, RUMATI_AVL_NODE_DESTRUCTOR destructor, void *udata)
+static void rumati_avl_destroy_node_recursive (
+        struct rumati_avl_node *n,
+        RUMATI_AVL_NODE_DESTRUCTOR destructor,
+        void *udata)
 {
     if (n->left != NULL){
         rumati_avl_destroy_node_recursive(n->left, destructor, udata);
@@ -144,17 +163,34 @@ static void rumati_avl_destroy_node_recursive (struct rumati_avl_node *n, RUMATI
 /*
  * rumati_avl_clear() - removes all nodes from the tree, using the destructor
  * provided.
+ *
+ * Parameters:
+ *      tree -  the tree to clear
+ *      destructor -    the destructor to use when destroying each node's data
  */
 RUMATI_AVL_API
-void rumati_avl_clear(RUMATI_AVL_TREE *tree, RUMATI_AVL_NODE_DESTRUCTOR destructor)
+void rumati_avl_clear(
+        RUMATI_AVL_TREE *tree,
+        RUMATI_AVL_NODE_DESTRUCTOR destructor)
 {
     if (tree->root != NULL){
         rumati_avl_destroy_node_recursive(tree->root, destructor, tree->udata);
     }
 }
 
+/*
+ * rumati_avl_destroy() - destroys a tree, freeing all memory used by the tree,
+ * and cleanly destrying node data using a destructor.
+ * provided.
+ *
+ * Parameters:
+ *      tree -  the tree to destroy
+ *      destructor -    the destructor to use when destroying each node's data
+ */
 RUMATI_AVL_API
-void rumati_avl_destroy(RUMATI_AVL_TREE *tree, RUMATI_AVL_NODE_DESTRUCTOR destructor)
+void rumati_avl_destroy(
+        RUMATI_AVL_TREE *tree,
+        RUMATI_AVL_NODE_DESTRUCTOR destructor)
 {
     rumati_avl_clear(tree, destructor);
     free(tree);
