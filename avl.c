@@ -1,8 +1,15 @@
+/*
+ * TODO:
+ *  *   Add error code for when the tree gets too large, and check that we
+ *      dontover run the updates array when inserting or deleting
+ */
 #include "avl.h"
 
 #include <stdlib.h>     /* for malloc(), free() */
 #include <stdint.h>     /* for int8_t */
 #include <stdbool.h>    /* for bool */
+
+#define RUMATI_AVL_MAX_HEIGHT   65
 
 /*
  * Tree type
@@ -66,12 +73,6 @@ struct rumati_avl_node_update {
      * subtree.
      */
     bool left;
-    /*
-     * The next element in the update list. Since all elements are prepened to
-     * this list when searching, the node in the next element is the node in
-     * this element's parent.
-     */
-    struct rumati_avl_node_update *next;
 };
 
 /*
@@ -268,25 +269,13 @@ static void rumati_avl_rotate_left(struct rumati_avl_node **node_ptr)
     }
 }
 
-static bool rumati_avl_prepend_update(struct rumati_avl_node_update **first, struct rumati_avl_node **node_ptr, bool left)
-{
-    struct rumati_avl_node_update *update = malloc(sizeof(*update));
-    if (update == NULL){
-        return false;
-    }
-    update->node_ptr = node_ptr;
-    update->left = left;
-    update->next = *first;
-    *first = update;
-    return true;
-}
-
 RUMATI_AVL_API
 RUMATI_AVL_ERROR rumati_avl_put(RUMATI_AVL_TREE *tree, void *object, void **old_value)
 {
     struct rumati_avl_node *n = NULL;
     struct rumati_avl_node **parent_link = &tree->root;
-    struct rumati_avl_node_update *updates = NULL;
+    struct rumati_avl_node_update updates[RUMATI_AVL_MAX_HEIGHT];
+    int update_size = 0;
 
     while (*parent_link != NULL){
         int cmp = tree->comparator(tree->udata, object, (*parent_link)->data);
@@ -297,21 +286,21 @@ RUMATI_AVL_ERROR rumati_avl_put(RUMATI_AVL_TREE *tree, void *object, void **old_
             (*parent_link)->data = object;
             goto success;
         }else if (cmp > 0){
-            if (!rumati_avl_prepend_update(&updates, parent_link, false)){
-                goto nomemfail;
-            }
+            updates[update_size].node_ptr = parent_link;
+            updates[update_size].left = false;
+            update_size++;
             parent_link = &(*parent_link)->right;
         }else if (cmp < 0){
-            if (!rumati_avl_prepend_update(&updates, parent_link, true)){
-                goto nomemfail;
-            }
+            updates[update_size].node_ptr = parent_link;
+            updates[update_size].left = true;
+            update_size++;
             parent_link = &(*parent_link)->left;
         }
     }
 
     n = malloc(sizeof(*n));
     if (n == NULL){
-        goto nomemfail;
+        return RUMATI_AVL_ENOMEM;
     }
     n->left = NULL;
     n->right = NULL;
@@ -323,12 +312,11 @@ RUMATI_AVL_ERROR rumati_avl_put(RUMATI_AVL_TREE *tree, void *object, void **old_
     /*
      * Do updates
      */
-    while (updates != NULL){
-        struct rumati_avl_node_update *update = updates;
-        updates = updates->next;
-        if (update->left){
-            (*update->node_ptr)->balance--;
-            if ((*update->node_ptr)->balance < -1){
+    while (update_size > 0){
+        update_size--;
+        if (updates[update_size].left){
+            (*updates[update_size].node_ptr)->balance--;
+            if ((*updates[update_size].node_ptr)->balance < -1){
                 /*
                  * Do rotations, and then break, because no further updates are needed
                  *
@@ -336,52 +324,30 @@ RUMATI_AVL_ERROR rumati_avl_put(RUMATI_AVL_TREE *tree, void *object, void **old_
                  * below our left child could possibly leave our left child in even
                  * balance, and leave us inbalanced at the same time.
                  */
-                if ((*update->node_ptr)->left->balance > 0){
-                    rumati_avl_rotate_left(&(*update->node_ptr)->left);
+                if ((*updates[update_size].node_ptr)->left->balance > 0){
+                    rumati_avl_rotate_left(&(*updates[update_size].node_ptr)->left);
                 }
-                rumati_avl_rotate_right(update->node_ptr);
-                free(update);
+                rumati_avl_rotate_right(updates[update_size].node_ptr);
                 break;
-            }else if ((*update->node_ptr)->balance >= 0){
-                free(update);
+            }else if ((*updates[update_size].node_ptr)->balance >= 0){
                 break;
-            }else{
-                free(update);
             }
         }else{
-            (*update->node_ptr)->balance++;
-            if ((*update->node_ptr)->balance > 1){
-                if ((*update->node_ptr)->right->balance < 0){
-                    rumati_avl_rotate_right(&(*update->node_ptr)->right);
+            (*updates[update_size].node_ptr)->balance++;
+            if ((*updates[update_size].node_ptr)->balance > 1){
+                if ((*updates[update_size].node_ptr)->right->balance < 0){
+                    rumati_avl_rotate_right(&(*updates[update_size].node_ptr)->right);
                 }
-                rumati_avl_rotate_left(update->node_ptr);
-                free(update);
+                rumati_avl_rotate_left(updates[update_size].node_ptr);
                 break;
-            }else if ((*update->node_ptr)->balance <= 0){
-                free(update);
+            }else if ((*updates[update_size].node_ptr)->balance <= 0){
                 break;
-            }else{
-                free(update);
             }
         }
     }
 
 success:
-    while (updates != NULL){
-        struct rumati_avl_node_update *update = updates;
-        updates = update->next;
-        free(update);
-    }
-
     return RUMATI_AVL_OK;
-
-nomemfail:
-    while (updates != NULL){
-        struct rumati_avl_node_update *update = updates;
-        updates = update->next;
-        free(update);
-    }
-    return RUMATI_AVL_ENOMEM;
 }
 
 RUMATI_AVL_API
@@ -516,13 +482,19 @@ void *rumati_avl_get_less_than(RUMATI_AVL_TREE *tree, void *key)
 RUMATI_AVL_API
 RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **old_value)
 {
-    RUMATI_AVL_ERROR retv = RUMATI_AVL_ENOENT;
     struct rumati_avl_node **parent_link = &tree->root;
     struct rumati_avl_node *delnode = NULL;
-    struct rumati_avl_node_update *updates = NULL;
+    struct rumati_avl_node_update updates[RUMATI_AVL_MAX_HEIGHT];
+    int update_size = 0;
 
-    while (*parent_link != NULL){
-        int cmp = tree->comparator(tree->udata, object, (*parent_link)->data);
+    while (1){
+        int cmp;
+
+        if (*parent_link == NULL){
+            return RUMATI_AVL_ENOENT;
+        }
+
+        cmp = tree->comparator(tree->udata, object, (*parent_link)->data);
         if (cmp == 0){
             delnode = *parent_link;
             /*
@@ -538,16 +510,14 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
                 free(delnode);
             }else{
                 if (delnode->balance < 0){
-                    if (!rumati_avl_prepend_update(&updates, parent_link, true)){
-                        retv = RUMATI_AVL_ENOMEM;
-                        goto out;
-                    }
+                    updates[update_size].node_ptr = parent_link;
+                    updates[update_size].left = true;
+                    update_size++;
                     parent_link = &(*parent_link)->left;
                     while ((*parent_link)->right != NULL){
-                        if (!rumati_avl_prepend_update(&updates, parent_link, false)){
-                            retv = RUMATI_AVL_ENOMEM;
-                            goto out;
-                        }
+                        updates[update_size].node_ptr = parent_link;
+                        updates[update_size].left = false;
+                        update_size++;
                         parent_link = &(*parent_link)->right;
                     }
                     *old_value = delnode->data;
@@ -556,16 +526,14 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
                     *parent_link = delnode->left;
                     free(delnode);
                 }else{
-                    if (!rumati_avl_prepend_update(&updates, parent_link, false)){
-                        retv = RUMATI_AVL_ENOMEM;
-                        goto out;
-                    }
+                    updates[update_size].node_ptr = parent_link;
+                    updates[update_size].left = false;
+                    update_size++;
                     parent_link = &(*parent_link)->right;
                     while ((*parent_link)->left != NULL){
-                        if (!rumati_avl_prepend_update(&updates, parent_link, true)){
-                            retv = RUMATI_AVL_ENOMEM;
-                            goto out;
-                        }
+                        updates[update_size].node_ptr = parent_link;
+                        updates[update_size].left = true;
+                        update_size++;
                         parent_link = &(*parent_link)->left;
                     }
                     *old_value = delnode->data;
@@ -575,31 +543,27 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
                     free(delnode);
                 }
             }
-            goto update;
+            break;
         }else if (cmp > 0){
-            if (!rumati_avl_prepend_update(&updates, parent_link, false)){
-                retv = RUMATI_AVL_ENOMEM;
-                goto out;
-            }
+            updates[update_size].node_ptr = parent_link;
+            updates[update_size].left = false;
+            update_size++;
             parent_link = &(*parent_link)->right;
         }else if (cmp < 0){
-            if (!rumati_avl_prepend_update(&updates, parent_link, true)){
-                retv = RUMATI_AVL_ENOMEM;
-                goto out;
-            }
+            updates[update_size].node_ptr = parent_link;
+            updates[update_size].left = true;
+            update_size++;
             parent_link = &(*parent_link)->left;
         }
     }
 
-    goto out;
-
-update:
     /*
      * Do updates
      */
-    while (updates != NULL){
-        struct rumati_avl_node_update *update = updates;
-        updates = updates->next;
+    while (update_size > 0){
+        struct rumati_avl_node_update *update;
+        update_size--;
+        update = &updates[update_size];
         if (update->left){
             (*update->node_ptr)->balance++;
             if ((*update->node_ptr)->balance > 1){
@@ -609,14 +573,11 @@ update:
                 rumati_avl_rotate_left(update->node_ptr);
                 if ((*update->node_ptr)->balance <= 0 &&
                         (*update->node_ptr)->left->balance > 0){
-                    free(update);
                     break;
                 }
             }else if ((*update->node_ptr)->balance > 0){
-                free(update);
                 break;
             }
-            free(update);
         }else{
             (*update->node_ptr)->balance--;
             if ((*update->node_ptr)->balance < -1){
@@ -626,26 +587,15 @@ update:
                 rumati_avl_rotate_right(update->node_ptr);
                 if ((*update->node_ptr)->balance >= 0 &&
                         (*update->node_ptr)->right->balance < 0){
-                    free(update);
                     break;
                 }
             }else if ((*update->node_ptr)->balance < 0){
-                free(update);
                 break;
             }
-            free(update);
         }
     }
-    retv = RUMATI_AVL_OK;
 
-out:
-    while (updates != NULL){
-        struct rumati_avl_node_update *update = updates;
-        updates = update->next;
-        free(update);
-    }
-
-    return retv;
+    return RUMATI_AVL_OK;
 }
 
 void *rumati_avl_get_smallest(RUMATI_AVL_TREE *tree)
