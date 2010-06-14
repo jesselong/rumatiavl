@@ -344,7 +344,7 @@ static void rumati_avl_rotate_right(struct rumati_avl_node **node_ptr)
 static void rumati_avl_rotate_left(struct rumati_avl_node **node_ptr)
 {
     /*
-     * The implementation of this efunction is identical to the implementation
+     * The implementation of this function is identical to the implementation
      * of rumati_avl_rotate_right(), please see comments there.
      */
     int8_t orb, nrb;
@@ -406,7 +406,10 @@ static bool rumati_avl_add_update(
  *      entry -     The entry to add to the tree.
  *      old_value - A pointer to a pointer which will be populated with the 
  *                  the previous value for the entry if one exists, or NULL
- *                  if there was previously no matching entry.
+ *                  if there was previously no matching entry. If NULL is
+ *                  passed as old_value, then the previous value will be
+ *                  overwritten without being destroyed, which may cause a
+ *                  memory leak.
  * 
  * Returns:
  *      RUMATI_AVL_OK       On success
@@ -461,7 +464,7 @@ RUMATI_AVL_ERROR rumati_avl_put(
     }
 
     /*
-     * No matching node found, so, this will be a new node, insert as lea
+     * No matching node found, so, this will be a new node, insert as leaf
      * where our binary search ended.
      */
 
@@ -488,32 +491,74 @@ RUMATI_AVL_ERROR rumati_avl_put(
         updates.number_of_updates--;
         update = &updates.update[updates.number_of_updates];
         if (update->left){
+            /*
+             * Node added to the left, so tree must be heavier to the left.
+             * In other words, decrease balance.
+             */
             (*update->node_ptr)->balance--;
-            if ((*update->node_ptr)->balance < -1){
+            if ((*update->node_ptr)->balance == 0){
                 /*
-                 * Do rotations, and then break, because no further updates are needed
+                 * If the addition of a node in this nodes left subtree left
+                 * the node balanced, then no further updates are required to
+                 * be performed on this nodes parents.
+                 */
+                break;
+            }else if ((*update->node_ptr)->balance < -1){
+                /*
+                 * Tree is unbalanced. We now rotate the tree to balance this
+                 * node, then break because, for each new node added to a
+                 * tree, we only ever need to rebalance one node.
                  *
-                 * our left child cannot possibly have even balance, as no addition
-                 * below our left child could possibly leave our left child in even
-                 * balance, and leave us inbalanced at the same time.
+                 * We may need to do a double rotate, because of the situation
+                 * where the right child of our left child is heavier. This
+                 * would cause a simple, single rotation to leave the tree as
+                 * unbalanced as it was before the rotate. An example of this
+                 * behaviour below:
+                 *
+                 *  Figure 1  |  Figure 2   |   Figure 3    |   Figure 4
+                 * -----------+-------------+---------------+---------------
+                 *      F     |     B       |         F     |       D
+                 *     / \    |    / \      |        / \    |      / \
+                 *    /   \   |   /   \     |       /   \   |     /   \
+                 *   B     G  |  A     F    |      D     G  |    B     F
+                 *  / \       |       / \   |     / \       |   / \   / \
+                 * A   D      |      D   G  |    B   E      |  A   C E   G
+                 *    / \     |     / \     |   / \         |
+                 *   C   E    |    C   E    |  A   C        |
+                 *
+                 * If the tree in Figure 1 is simply rotated clockwise, the
+                 * result is the tree in Figure 2, which is equally unbalanced,
+                 * because the previous root (F) inherits its heaviest
+                 * granchild (D).
+                 *
+                 * The solution is to first perform an anti-clokwise rotation
+                 * on B, resulting in the tree shown in Figure 3, then rotating
+                 * F clockwise, resulting in a balanced tree shown in Figure 4.
+                 *
+                 * It is also interesting to note that, for any tree rooted at
+                 * F (see Figure 1), where the tree is unbalanced towards the
+                 * left subtree rooted at B, it is not possible for node B to
+                 * have an even balance. If F is unbalanced, then B must be at
+                 * least 1 level heavier on either side.
                  */
                 if ((*update->node_ptr)->left->balance > 0){
                     rumati_avl_rotate_left(&(*update->node_ptr)->left);
                 }
                 rumati_avl_rotate_right(update->node_ptr);
                 break;
-            }else if ((*update->node_ptr)->balance >= 0){
-                break;
             }
         }else{
+            /*
+             * Please see discussion above
+             */
             (*update->node_ptr)->balance++;
-            if ((*update->node_ptr)->balance > 1){
+            if ((*update->node_ptr)->balance == 0){
+                break;
+            }else if ((*update->node_ptr)->balance > 1){
                 if ((*update->node_ptr)->right->balance < 0){
                     rumati_avl_rotate_right(&(*update->node_ptr)->right);
                 }
                 rumati_avl_rotate_left(update->node_ptr);
-                break;
-            }else if ((*update->node_ptr)->balance <= 0){
                 break;
             }
         }
@@ -522,8 +567,20 @@ RUMATI_AVL_ERROR rumati_avl_put(
     return RUMATI_AVL_OK;
 }
 
+/*
+ * rumati_avl_get() - returns the matching entry in the tree, if one exists.
+ *
+ * Parameters:
+ *      tree -  The tree to search for a matching entry.
+ *      key -   The key with which to search for a matching entry.
+ *
+ * Returns:
+ *      The matching entry in the tree, or NULL if no matching entry was found.
+ */
 RUMATI_AVL_API
-void *rumati_avl_get(RUMATI_AVL_TREE *tree, void *key)
+void *rumati_avl_get(
+        RUMATI_AVL_TREE *tree,
+        void *key)
 {
     struct rumati_avl_node *n = tree->root;
 
@@ -541,10 +598,30 @@ void *rumati_avl_get(RUMATI_AVL_TREE *tree, void *key)
     return NULL;
 }
 
+/*
+ * rumati_avl_get_greater_than_or_equal() - returns the lowest key which is
+ * either greater than or equal to the given key.
+ *
+ * Parameters:
+ *      tree -  The tree in which to search for a qualifying entry
+ *      key -   The key which a qualifying entry must be greater than or
+ *              equal to.
+ *
+ * Returns:
+ *      A lowest entry that is greater than or equal to key, or NULL if no
+ *      entry was found which is greater than or equal to key.
+ */
 RUMATI_AVL_API
-void *rumati_avl_get_greater_than_or_equal(RUMATI_AVL_TREE *tree, void *key)
+void *rumati_avl_get_greater_than_or_equal(
+        RUMATI_AVL_TREE *tree,
+        void *key)
 {
     struct rumati_avl_node *n = tree->root;
+    /*
+     * Each time we go left, keep a reference to the node at which we go left.
+     * If we fail to find any nodes greater than or equal to the search key,
+     * then this will be the first entry which is greater than the search key.
+     */
     struct rumati_avl_node *prev = NULL;
 
     while (n != NULL){
@@ -566,10 +643,31 @@ void *rumati_avl_get_greater_than_or_equal(RUMATI_AVL_TREE *tree, void *key)
     return NULL;
 }
 
+/*
+ * rumati_avl_get_less_than_or_equal() - returns the highest key which is
+ * either less than or equal to the given key.
+ *
+ * Parameters:
+ *      tree -  The tree in which to search for a qualifying entry
+ *      key -   The key which a qualifying entry must be less than or
+ *              equal to.
+ *
+ * Returns:
+ *      A highest entry that is less than or equal to key, or NULL if no
+ *      entry was found which is less than or equal to key.
+ */
 RUMATI_AVL_API
-void *rumati_avl_get_less_than_or_equal(RUMATI_AVL_TREE *tree, void *key)
+void *rumati_avl_get_less_than_or_equal(
+        RUMATI_AVL_TREE *tree,
+        void *key)
 {
     struct rumati_avl_node *n = tree->root;
+    /*
+     * Each time we go right, keep a reference to the node at which we go
+     * right. If we fail to find any nodes less than or equal to the search
+     * key, then this will be the first entry which is less than the search
+     * key.
+     */
     struct rumati_avl_node *prev = NULL;
 
     while (n != NULL){
@@ -591,8 +689,22 @@ void *rumati_avl_get_less_than_or_equal(RUMATI_AVL_TREE *tree, void *key)
     return NULL;
 }
 
+/*
+ * rumati_avl_get_greater_than() - retrieves the lowest entry is is scrictly
+ * greater than the search key.
+ *
+ * Parameters:
+ *      tree -  The tree to search.
+ *      key -   The key which a matching entry must be greater than.
+ *
+ * Returns:
+ *      The lowest entry which is scrictly greater than the search key, or
+ *      NULL if there is no entry greater than the search key.
+ */
 RUMATI_AVL_API
-void *rumati_avl_get_greater_than(RUMATI_AVL_TREE *tree, void *key)
+void *rumati_avl_get_greater_than(
+        RUMATI_AVL_TREE *tree,
+        void *key)
 {
     struct rumati_avl_node *n = tree->root;
     struct rumati_avl_node *prev = NULL;
@@ -623,8 +735,22 @@ void *rumati_avl_get_greater_than(RUMATI_AVL_TREE *tree, void *key)
     return NULL;
 }
 
+/*
+ * rumati_avl_get_less_than() - retrieves the lowest entry is is scrictly
+ * less than the search key.
+ *
+ * Parameters:
+ *      tree -  The tree to search.
+ *      key -   The key which a matching entry must be less than.
+ *
+ * Returns:
+ *      The lowest entry which is scrictly less than the search key, or
+ *      NULL if there is no entry less than the search key.
+ */
 RUMATI_AVL_API
-void *rumati_avl_get_less_than(RUMATI_AVL_TREE *tree, void *key)
+void *rumati_avl_get_less_than(
+        RUMATI_AVL_TREE *tree,
+        void *key)
 {
     struct rumati_avl_node *n = tree->root;
     struct rumati_avl_node *prev = NULL;
@@ -655,38 +781,100 @@ void *rumati_avl_get_less_than(RUMATI_AVL_TREE *tree, void *key)
     return NULL;
 }
 
+/*
+ * rumati_avl_delete() - removes an entry from a tree.
+ *
+ * Parameters:
+ *      tree -      The tree from which to delete the entry.
+ *      key -       The value by which to find the entry to be deleted.
+ *      old_value - A pointer which will be populated with a pointer to
+ *                  the deleted entry if one is found. You should then release
+ *                  the memory held by the deleted entry. You may pass NULL as
+ *                  old_value, but then you will have no opportunity to
+ *                  release the memory used by the deleted entry, which will
+ *                  be a memory leak in most uses.
+ *
+ * Returns:
+ *      RUMATI_AVL_OK       If the entry was deleted successfully.
+ *      RUMATI_AVL_ENOENT   If no matching entry was found.
+ *      RUMATI_AVL_ETOOBIG  If the tree is too large. This should never happen,
+ *                          since rumati_avl_put() should fail with
+ *                          RUMATI_AVL_ETOOBIG when creating a tree which is
+ *                          too large.
+ */
 RUMATI_AVL_API
-RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **old_value)
+RUMATI_AVL_ERROR rumati_avl_delete(
+        RUMATI_AVL_TREE *tree,
+        void *key,
+        void **old_value)
 {
     struct rumati_avl_node **parent_link = &tree->root;
-    struct rumati_avl_node *delnode = NULL;
     struct rumati_avl_update_list updates;
 
+    /* init updates */
     updates.number_of_updates = 0;
 
     while (1){
         int cmp;
 
         if (*parent_link == NULL){
+            /*
+             * We reached a leaf's NULL pointer child link, without finding
+             * a matching entry - none exists.
+             */
             return RUMATI_AVL_ENOENT;
         }
 
-        cmp = tree->comparator(tree->udata, object, (*parent_link)->data);
-        if (cmp == 0){
-            delnode = *parent_link;
+        /* normal binary search descend based on key comparison */
+        cmp = tree->comparator(tree->udata, key, (*parent_link)->data);
+        if (cmp > 0){
             /*
-             * Try delete in place if at least one child is missing
+             * Node to be deleted is to the right of this node, descend.
              */
-            if (delnode->balance <= 0 && delnode->right == NULL){
-                *parent_link = delnode->left;
-                *old_value = delnode->data;
-                free(delnode);
-            }else if (delnode->balance >= 0 && delnode->left == NULL){
-                *parent_link = delnode->right;
-                *old_value = delnode->data;
-                free(delnode);
+            if (rumati_avl_add_update(&updates, parent_link, false) == false){
+                return RUMATI_AVL_ETOOBIG;
+            }
+            parent_link = &(*parent_link)->right;
+        }else if (cmp < 0){
+            /*
+             * Node to be deleted is to the left of this node, descend.
+             */
+            if (rumati_avl_add_update(&updates, parent_link, true) == false){
+                return RUMATI_AVL_ETOOBIG;
+            }
+            parent_link = &(*parent_link)->left;
+        }else if (cmp == 0){
+            struct rumati_avl_node *delnode = NULL;
+            void *tmp_data_ptr;
+            /*
+             * This is the node which must be deleted
+             */
+            delnode = *parent_link;
+            tmp_data_ptr = delnode->data;
+            /*
+             * First, try delete the node in place if it does not have 2
+             * children, by replacing it with it's only node if it have one,
+             * or by making it's parent a leaf if it has no children.
+             */
+            if ((*parent_link)->right == NULL){
+                *parent_link = (*parent_link)->left;
+            }else if ((*parent_link)->left == NULL){
+                *parent_link = (*parent_link)->right;
             }else{
-                if (delnode->balance < 0){
+                /*
+                 * The node to be deleted has two children. We cannot simply
+                 * delete it by replacing it with it's only child. So, we
+                 * delete it by overwritting its data with that of its inner-
+                 * most child on its heavier subtree, then deleting that inner
+                 * most child in the heavier subtree.
+                 */
+                if ((*parent_link)->balance < 0){
+                    /*
+                     * Left subtree is greater, replace the node to be deleted
+                     * with the right most node in the left subtree.
+                     *
+                     * Move left, then as far right as possible.
+                     */
                     if (rumati_avl_add_update(&updates, parent_link, true) == false){
                         return RUMATI_AVL_ETOOBIG;
                     }
@@ -697,12 +885,30 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
                         }
                         parent_link = &(*parent_link)->right;
                     }
-                    *old_value = delnode->data;
+                    /*
+                     * Overwrite node to be deleted with replacement node.
+                     */
                     delnode->data = (*parent_link)->data;
                     delnode = *parent_link;
+                    /*
+                     * Consider:
+                     *
+                     *     E
+                     *    / \
+                     *   B   F
+                     *  / \   \
+                     * A   D   G
+                     *    /
+                     *   C
+                     *
+                     * E's content is replaced with the content from D, then D
+                     * is deleted. B must inherits D's outside hild (C) if any.
+                     */
                     *parent_link = delnode->left;
-                    free(delnode);
                 }else{
+                    /*
+                     * Same as block above
+                     */
                     if (rumati_avl_add_update(&updates, parent_link, false) == false){
                         return RUMATI_AVL_ETOOBIG;
                     }
@@ -713,24 +919,20 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
                         }
                         parent_link = &(*parent_link)->left;
                     }
-                    *old_value = delnode->data;
                     delnode->data = (*parent_link)->data;
                     delnode = *parent_link;
                     *parent_link = delnode->right;
-                    free(delnode);
                 }
             }
+            /*
+             * If the user has given an "out" variable for the deleted value,
+             * populate it with the deleted value.
+             */
+            if (old_value != NULL){
+                *old_value = tmp_data_ptr;
+            }
+            free(delnode);
             break;
-        }else if (cmp > 0){
-            if (rumati_avl_add_update(&updates, parent_link, false) == false){
-                return RUMATI_AVL_ETOOBIG;
-            }
-            parent_link = &(*parent_link)->right;
-        }else if (cmp < 0){
-            if (rumati_avl_add_update(&updates, parent_link, true) == false){
-                return RUMATI_AVL_ETOOBIG;
-            }
-            parent_link = &(*parent_link)->left;
         }
     }
 
@@ -742,17 +944,39 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
         updates.number_of_updates--;
         update = &updates.update[updates.number_of_updates];
         if (update->left){
+            /*
+             * Node deleted to the left of this node, bump balance towards
+             * the right.
+             */
             (*update->node_ptr)->balance++;
+            /*
+             * TODO discuss affect on parent:
+             * (balance is after adjustment for deleted descendant)
+             *  -   balance < 0:    impossible, would have had to be imbalanced
+             *                      before delete
+             *  -   balance = 0:    parent loses 1 height, as tree is now one
+             *                      layer lighter
+             *  -   balance = 1:    tree was balanced, now 1 layer heavier on
+             *                      right. No affect on parent, no more updates
+             *                      required.
+             *  -   balance > 1:    tree was one heavier on right, now 2
+             *                      heavier, ie. imbalanced. This situation has
+             *                      no affect on parent, because node was
+             *                      deleted on lighter subtree. However, a
+             *                      rotation is required to rebalance treee,
+             *                      and said rotation will cause tree to be one
+             *                      layer lighter, continue updating parent.
+             */
             if ((*update->node_ptr)->balance > 1){
+                /*
+                 * Node is now imbalanced. Rebalance according to normal
+                 * AVL rules. See rumati_avl_put() for discussion.
+                 */
                 if ((*update->node_ptr)->right->balance < 0){
                     rumati_avl_rotate_right(&(*update->node_ptr)->right);
                 }
                 rumati_avl_rotate_left(update->node_ptr);
-                if ((*update->node_ptr)->balance <= 0 &&
-                        (*update->node_ptr)->left->balance > 0){
-                    break;
-                }
-            }else if ((*update->node_ptr)->balance > 0){
+            }else if ((*update->node_ptr)->balance == 1){
                 break;
             }
         }else{
@@ -762,11 +986,7 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
                     rumati_avl_rotate_left(&(*update->node_ptr)->left);
                 }
                 rumati_avl_rotate_right(update->node_ptr);
-                if ((*update->node_ptr)->balance >= 0 &&
-                        (*update->node_ptr)->right->balance < 0){
-                    break;
-                }
-            }else if ((*update->node_ptr)->balance < 0){
+            }else if ((*update->node_ptr)->balance == -1){
                 break;
             }
         }
@@ -775,6 +995,16 @@ RUMATI_AVL_ERROR rumati_avl_delete(RUMATI_AVL_TREE *tree, void *object, void **o
     return RUMATI_AVL_OK;
 }
 
+/*
+ * rumati_avl_get_smallest() - retrieves the smallest entry in the tree.
+ *
+ * Parameters:
+ *      tree -  The tree in which to find the smallest value.
+ * 
+ * Returns:
+ *      A pointer to the smallest value in the tree, or NULL if the tree
+ *      is empty.
+ */
 RUMATI_AVL_API
 void *rumati_avl_get_smallest(RUMATI_AVL_TREE *tree)
 {
@@ -791,6 +1021,16 @@ void *rumati_avl_get_smallest(RUMATI_AVL_TREE *tree)
     return n->data;
 }
 
+/*
+ * rumati_avl_get_greatest() - retrieves the greatest entry in the tree.
+ *
+ * Parameters:
+ *      tree -  The tree in which to find the greatest value.
+ * 
+ * Returns:
+ *      A pointer to the greatest value in the tree, or NULL if the tree
+ *      is empty.
+ */
 RUMATI_AVL_API
 void *rumati_avl_get_greatest(RUMATI_AVL_TREE *tree)
 {
@@ -806,4 +1046,3 @@ void *rumati_avl_get_greatest(RUMATI_AVL_TREE *tree)
 
     return n->data;
 }
-
