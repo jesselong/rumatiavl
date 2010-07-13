@@ -10,7 +10,7 @@ clean:
 	rm -f *.o *.a
 
 test:
-	$(CC) $(CFLAGS) $(CFLAGS_TEST) -o avltest avltest.c
+	$(CC) -g $(CFLAGS) $(CFLAGS_TEST) -o avltest avltest.c
 	./avltest
 
 $(STATIC_LIB): $(OBJECTS)
