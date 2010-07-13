@@ -7,7 +7,7 @@ STATIC_LIB	= librumatiavl.a
 all: $(STATIC_LIB)
 
 clean:
-	rm -f *.o *.a
+	rm -f *.o *.a avltest
 
 test:
 	$(CC) -g $(CFLAGS) $(CFLAGS_TEST) -o avltest avltest.c
