@@ -2,10 +2,10 @@
 
 static int int_comparator(void *udata, void *ip1, void *ip2)
 {
-    (void)udata;
-
     int i1 = *(int*)ip1;
     int i2 = *(int*)ip2;
+
+    (void)udata;
 
     if (i1 < i2){
         return -1;
@@ -24,7 +24,7 @@ static void destructor(void *udata, void *node)
 
 #include <stdio.h>
 
-#define MAX_TEST_NUMBER 1000
+#define MAX_TEST_NUMBER 10000
 
 static int verify_node_height(struct rumati_avl_node *n)
 {
@@ -112,7 +112,7 @@ int main (int argc, char *argv[])
         goto out1;
     }
 
-    for (i = 0; i < 800; i++){
+    for (i = 0; i < 8000; i++){
         n = random() % MAX_TEST_NUMBER;
         printf("INSERT: %d\n", n);
         in_tree[n] = true;
@@ -127,7 +127,7 @@ int main (int argc, char *argv[])
         }
     }
 
-    for (i = 0; i < 500; i++){
+    for (i = 0; i < 5000; i++){
         n = random() % MAX_TEST_NUMBER;
         printf("DELETE: %d\n", n);
         err = rumati_avl_delete(tree, &num[n], NULL);
@@ -154,6 +154,8 @@ int main (int argc, char *argv[])
             goto out1;
         }
     }
+    
+    printf("OK! Tests passed successfully!\n");
 
 out1:
     rumati_avl_destroy(tree, destructor);
