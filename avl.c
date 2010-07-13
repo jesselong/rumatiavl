@@ -963,9 +963,11 @@ RUMATI_AVL_ERROR rumati_avl_delete(
              *                      heavier, ie. imbalanced. This situation has
              *                      no affect on parent, because node was
              *                      deleted on lighter subtree. However, a
-             *                      rotation is required to rebalance treee,
-             *                      and said rotation will cause tree to be one
-             *                      layer lighter, continue updating parent.
+             *                      rotation is required to rebalance tree.
+             *                      This rotation may or may not cause the
+             *                      parent to be one layer lighter. If it does,
+             *                      we must continue updating the parent. If
+             *                      not, we stop updating here.
              */
             if ((*update->node_ptr)->balance > 1){
                 /*
@@ -973,9 +975,47 @@ RUMATI_AVL_ERROR rumati_avl_delete(
                  * AVL rules. See rumati_avl_put() for discussion.
                  */
                 if ((*update->node_ptr)->right->balance < 0){
+                    /*
+                     * Double rotation required, eg:
+                     *
+                     *  A      A         B
+                     *   \      \       / \
+                     *    C =>   B  => A   C
+                     *   /        \
+                     *  B          C
+                     *
+                     *  This will leave the tree lighter, so we continue to
+                     *  update parents.
+                     */
                     rumati_avl_rotate_right(&(*update->node_ptr)->right);
+                    rumati_avl_rotate_left(update->node_ptr);
+                }else if ((*update->node_ptr)->right->balance == 0){
+                    /*
+                     * The tree is in need of rotation, but the rotation will
+                     * not change the size of the tree, so stop updating here.
+                     * There is no change in parent balance. eg:
+                     *
+                     * A         C
+                     *  \       / \
+                     *   C  => A   D
+                     *  / \     \
+                     * B   D     B
+                     */
+                    rumati_avl_rotate_left(update->node_ptr);
+                    break;
+                }else{
+                    /*
+                     * A simple left rotation which will cause the tree to be
+                     * lighter - continue updating. eg:
+                     *
+                     * A         B
+                     *  \       / \
+                     *   B  => A   C
+                     *    \
+                     *     C
+                     */
+                    rumati_avl_rotate_left(update->node_ptr);
                 }
-                rumati_avl_rotate_left(update->node_ptr);
             }else if ((*update->node_ptr)->balance == 1){
                 break;
             }
@@ -984,8 +1024,13 @@ RUMATI_AVL_ERROR rumati_avl_delete(
             if ((*update->node_ptr)->balance < -1){
                 if ((*update->node_ptr)->left->balance > 0){
                     rumati_avl_rotate_left(&(*update->node_ptr)->left);
+                    rumati_avl_rotate_right(update->node_ptr);
+                }else if ((*update->node_ptr)->left->balance == 0){
+                    rumati_avl_rotate_right(update->node_ptr);
+                    break;
+                }else{
+                    rumati_avl_rotate_right(update->node_ptr);
                 }
-                rumati_avl_rotate_right(update->node_ptr);
             }else if ((*update->node_ptr)->balance == -1){
                 break;
             }
