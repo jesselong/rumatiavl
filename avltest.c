@@ -95,6 +95,8 @@ int main (int argc, char *argv[])
     int num[MAX_TEST_NUMBER];
     int i, n, retv;
 
+    (void)argc; (void)argv;
+
     if ((err = rumati_avl_new(&tree, int_comparator, NULL)) != RUMATI_AVL_OK){
         printf("Error creating avl tree: %d\n", err);
         return 1;
