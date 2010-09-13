@@ -531,7 +531,7 @@ RUMATI_AVL_ERROR rumati_avl_put(
                  * because the previous root (F) inherits its heaviest
                  * granchild (D).
                  *
-                 * The solution is to first perform an anti-clokwise rotation
+                 * The solution is to first perform an anti-clockwise rotation
                  * on B, resulting in the tree shown in Figure 3, then rotating
                  * F clockwise, resulting in a balanced tree shown in Figure 4.
                  *
