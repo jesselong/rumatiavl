@@ -264,7 +264,7 @@ static void rumati_avl_rotate_right(struct rumati_avl_node **node_ptr)
      * D takes the right child of B (ie. C) as its left child, while B takes
      * D as its right child.
      */
-    int8_t orb, nrb;
+    int8_t nrb;
 
     /* keep reference to old root (D) */
     struct rumati_avl_node *old_root = *node_ptr;
@@ -281,8 +281,6 @@ static void rumati_avl_rotate_right(struct rumati_avl_node **node_ptr)
     /* new root (B)'s right child is the old root (D) */
     (*node_ptr)->right = old_root;
 
-    /* old root balance pre rotate (balance of D pre-rotate) */
-    orb = old_root->balance;
     /* new root balance pre rotate (balance of B pre-rotate) */
     nrb = (*node_ptr)->balance;
 
@@ -347,14 +345,13 @@ static void rumati_avl_rotate_left(struct rumati_avl_node **node_ptr)
      * The implementation of this function is identical to the implementation
      * of rumati_avl_rotate_right(), please see comments there.
      */
-    int8_t orb, nrb;
+    int8_t nrb;
     struct rumati_avl_node *old_root = *node_ptr;
 
     *node_ptr = old_root->right;
     old_root->right = (*node_ptr)->left;
     (*node_ptr)->left = old_root;
 
-    orb = old_root->balance;
     nrb = (*node_ptr)->balance;
 
     old_root->balance--;
